@@ -1,0 +1,305 @@
+---
+title: <font face="times">R code for "Quasi-maximum Likelihood Inference for Linear Double Autoregressive Models"</font>
+author:  <p align="right"><font face="times">Songhua Tan, Liu Hua</font></p>
+subtitle:  <p align="right"><font face="times">2022/08/12</font></p>
+output: 
+  html_document: 
+    number_sections: yes
+    theme: paper
+    toc: yes
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,comment='',cache = T)
+```
+
+# Preparation
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+setwd("D:\\Paper\\LDAR_Rcode_Sinica")
+```
+
+
+```{r message=FALSE, warning=FALSE}
+rm(list = ls())
+gc()
+
+library(Rcpp)
+library(RcppEigen)
+library(latex2exp) # for plot
+library(rmutil) # for laplace distribution
+sourceCpp("./Programs/rcpp_LDAR.cpp") # Basic functions in form of Rcpp code.
+source("./Programs/LDAR.R") # R functions to perform the proposed estimation and inference as well as to support 'rcpp_LDAR.cpp'.
+source("./Programs/KSD.R") # R functions to conduct the Kernelized Stein Discrepancy (KSD) test.
+```
+
+# Real data
+
+## Descriptive statistics
+
+```{r message=FALSE, warning=FALSE}
+data <- na.omit(read.csv('./Dataset/BTCweekly.csv',header = TRUE))
+
+Y <-  as.numeric(gsub(",","",data[,2])) # Close price
+Y_f <- diff(log(Y)) # log-return
+Y_f <- Y_f-mean(Y_f,na.rm = T) # mean adjustment
+
+temp2 <- seq.Date(from = as.Date("2010/07/18",format = "%Y/%m/%d"), by = "week", length.out = 526)
+plot(lubridate::as_date(data[-1,1]),Y_f,type = "l",xlab =NA ,ylab = "log-return")
+```
+
+```{r message=FALSE, warning=FALSE}
+# ACF and PACF of Y_f and abs(Y_f)
+par(mfrow=c(2,2))
+acf(Y_f)  
+pacf(Y_f)
+acf(abs(Y_f))
+pacf(abs(Y_f))
+par(mfrow=c(1,1))
+```
+
+
+## E-QMLE
+
+### Model estimation
+
+```{r message=FALSE, warning=FALSE}
+p <- modelsection_LDAR_EQMLE(Y_f,P_max = 10);p #model order
+lambda_EQMLE <- estimate_EQMLE(Y_f,p);round(lambda_EQMLE,4) # Estimation of EQMLE 
+ASD_EQMLE <- asd_EQMLE(Y_f,p,lambda = lambda_EQMLE);round(ASD_EQMLE,4)  #ASD of EQMLE
+```
+
+### Q-Q plots of the fitted residuals
+
+```{r message=FALSE, warning=FALSE}
+res<-resdual(Y_f,lambda_EQMLE) # residuals
+par(mfrow=c(1,3))
+qqplot(qt(ppoints(526), df = 2), res, xlab = TeX("$t_2$"))
+qqline(res)
+qqplot(qt(ppoints(526), df = 3), res, xlab = TeX("$t_3$"))
+qqline(res)
+qqplot(qt(ppoints(526), df = 4), res, xlab = TeX("$t_4$"))
+qqline(res)
+par(mfrow=c(1,1))
+```
+
+### KSD test
+
+#### $H_0$: $\eta_t \sim Laplace(0,1)$ 
+
+```{r message=FALSE, warning=FALSE}
+res <- (res-mean(res))/sd(res) # standardization
+sigma <- find_median_distance(Z = res)
+test_laplace <- ksd_R(x = res,p = "laplace",sigma = sigma) # test statistic
+B_laplace <- bootstrap_KSD(lambda_est = lambda_EQMLE,p = 3,B = 1000,N = length(res),distribution = "laplace",est_method =  "E-QMLE") # bootstrap
+print(paste("The test statistic is",round(test_laplace,4),", and p-value is",round(mean(B_laplace>test_laplace),4)))
+```
+
+#### $H_0$: $\eta_t \sim N(0,1)$
+
+```{r message=FALSE, warning=FALSE}
+test_norm <- ksd_R(x = res,p = "norm",sigma = sigma) # test statistic
+B_norm <- bootstrap_KSD(lambda_est = lambda_EQMLE,distribution = "norm",est_method =  "E-QMLE",p = 3,B = 1000,N = length(res)) # bootstrap
+print(paste("The test statistic is",round(test_norm,4),", and p-value is",round(mean(B_norm>test_norm),4)))
+```
+
+### Portmanteau tests
+
+```{r message=FALSE, warning=FALSE}
+# kernel estimation of f_0
+res <- resdual(Y = Y_f,fitted_lambda = lambda_EQMLE)
+n_0 <- length(res)-p
+s_res <- sd(res)
+IQR <- quantile(res, 0.75) - quantile(res, 0.25)
+a <- min(s_res,IQR/1.34)
+h_hat_opt <- 0.9*n_0^(-1/5)*a
+d <- stats::density(res,bw = h_hat_opt,kernel = "gaussian")
+x_negative <- sum(d$x<0);x_positive <- x_negative+1 
+f_0 <- (d$y[x_negative]+d$y[x_positive])/2 
+sigma <- Sigma_EQMLE(lambda = lambda_EQMLE,Y = Y_f,f_0=f_0)
+
+# portmanteau tests
+pt_6 <- portmanteau_test_EQMLE(lambda_EQMLE,Y_f,m = 6, Sigma=sigma)
+print(paste("When m=6, the portmanteau test statistic is",round(pt_6$stat,4),", and p-value is",pchisq(pt_6$stat,df = 6*2,lower.tail = F)))
+
+pt_12 <- portmanteau_test_EQMLE(lambda_EQMLE,Y_f,m = 12, Sigma=sigma)
+print(paste("When m=12, the portmanteau test statistic is",round(pt_12$stat,4),", and p-value is",pchisq(pt_12$stat,df = 6*2,lower.tail = F)))
+
+pt_18 <- portmanteau_test_EQMLE(lambda_EQMLE,Y_f,m = 18, Sigma=sigma)
+print(paste("When m=18, the portmanteau test statistic is",round(pt_18$stat,4),", and p-value is",pchisq(pt_18$stat,df = 6*2,lower.tail = F)))
+```
+
+```{r message=FALSE, warning=FALSE}
+rho <- pt_18$rho;rho
+rho_sd <- sqrt(diag(pt_18$Sigma_cf)[1:length(rho)])
+gamma <- pt_18$gamma
+gamma_sd <- sqrt(diag(pt_18$Sigma_cf)[(length(rho)+1):(2*length(rho))])
+n<- length(Y_f)
+
+# plot
+par(mfrow=c(1,2),mai=c(1.25,0.8,0.6,0.3))
+plot(x=1:18,y=NULL,ylim = c(-0.3,0.3),xlab = "lag",ylab = NA,main= TeX("$\\rho$"))
+for (i in 1:18) {
+  lines(rep(i,5),seq(from = 0,to = rho[i],length.out = 5),lty=1)
+}
+abline(h = 0)
+lines(x = 1:18,y=qnorm(0.975)*rho_sd/sqrt(n),col = "red",lty=2)
+lines(x = 1:18,y=-qnorm(0.975)*rho_sd/sqrt(n),col = "red",lty=2)
+plot(x=1:18,y=NULL,ylim = c(-0.3,0.3),xlab = "lag",ylab = NA,main= TeX("$\\gamma$"))
+for (i in 1:18) {
+  lines(rep(i,5),seq(from = 0,to = gamma[i],length.out = 5),lty=1)
+}
+abline(h = 0)
+lines(x = 1:18,y=qnorm(0.975)*gamma_sd/sqrt(n),col = "red",lty=2)
+lines(x = 1:18,y=-qnorm(0.975)*gamma_sd/sqrt(n),col = "red",lty=2)
+par(mfrow=c(1,1),mai=c(1.25,0.8,0.1,0.3))
+```
+
+## G-QMLE
+
+### Model estimation
+
+```{r message=FALSE, warning=FALSE}
+# The LDAR model is estimated by QMLE, and the model order is the same as that of EQMLE for comparability
+lambda_GQMLE <- estimate_GQMLE(Y_f,p);round(lambda_GQMLE,4)
+ASD_GQMLE <- asd_GQMLE(Y_f,p,lambda = lambda_GQMLE);round(ASD_GQMLE,4)
+```
+
+### ARE
+
+```{r message=FALSE, warning=FALSE}
+cov_EQMLE <- asd_EQMLE(Y_f,p,lambda = lambda_EQMLE,cov = T)
+cov_GQMLE <- asd_GQMLE(Y_f,p,lambda = lambda_GQMLE,cov = T)
+
+res_E <- resdual(Y_f,lambda_EQMLE)
+R <- diag(c(rep(1,3),rep(1/sqrt(mean(res_E^2)),4)))
+Sigma_G <- t(R)%*%cov_GQMLE%*%R
+(det(Sigma_G)/det(cov_EQMLE))^(1/(2*p+1))
+```
+
+
+
+
+## DWQRE
+
+### Model estimation
+
+```{r message=FALSE, warning=FALSE}
+#DWQRE
+source("./Programs/DWQRE.R") # R functions to calculate the doubly weighted quantile regression estimator (DWQRE).
+n=length(Y_f)   #sample size
+K=9           #number of quantiles 
+KK=18         #number of lags in ACF 18
+ell=10^4      #replication in generating critical value of Q_BP
+#model estimation and diagnosis
+lagm=p
+ldar=ldarest(n,p,lagm,K,KK,ell,Y_f)
+target=ldar$target;X=ldar$X
+Betahat3=ldar$Betahat3
+Phihat3=ldar$Phihat3
+asd3Betaopt=ldar$asd3Betaopt
+asd3Phiopt=ldar$asd3Phiopt
+residual=ldar$residual
+QBPC1=ldar$QBPC1;QBPC2=ldar$QBPC2
+criticalC1=ldar$criticalC1
+criticalC2=ldar$criticalC2
+RC1=ldar$RC1;RC2=ldar$RC2
+criticalRC1=ldar$criticalRC1
+criticalRC2=ldar$criticalRC2
+pvalue1=ldar$pvalue1;pvalue1
+pvalue2=ldar$pvalue2;pvalue2
+# Reparameterize such that E(abs(res_QMLE))=1
+c0=1/mean(abs(residual))
+betahat0=1/c0;betahat0 # omega
+cbind(matrix(Betahat3,1,p)/c0,matrix(Phihat3,1,p)) # Estimation with Reparameterize
+cbind(matrix(asd3Betaopt,1,p)/c0,matrix(asd3Phiopt,1,p)) # ASD
+```
+
+### ARE
+
+```{r message=FALSE, warning=FALSE}
+p <- 3
+cov_EQMLE <- asd_EQMLE(Y_f,p,lambda = lambda_EQMLE,cov = T)
+
+# G is the first derivative of g(theta)
+G_1 <- diag(rep(1,p))
+G_2 <- -lambda_EQMLE[(p+2):(2*p+1)]/lambda_EQMLE[p+1]^2
+G_3 <- diag(rep(1/lambda_EQMLE[p+1],p))
+G <- matrix(0,nrow = 2*p,ncol = 2*p+1)
+G[(1:p),(1:p)] <- G_1
+G[(p+1):(2*p),(p+1)] <- G_2
+G[(p+1):(2*p),(p+2):(2*p+1)] <- G_3
+Sigma_E<- G%*%cov_EQMLE%*%t(G)
+(det(ldar$nvopt)/det(Sigma_E))^(1/(2*p))
+```
+
+
+
+
+
+# Rolling forecasting comparison
+
+## LDAR(EQMLE)
+
+```{r message=FALSE, warning=FALSE}
+## interval partition
+n <- length(Y_f)
+spilt <- 350
+Y_train <- Y_f[1:spilt];Y_test <- Y_f[(spilt+1):n]
+tau <- c(0.05,0.10,0.90,0.95)
+```
+
+```{r message=FALSE, warning=FALSE}
+pred_EQMLE <- predict_EQMLE(Y_train,Y_test,q = tau,p,method= "rolling")
+pred_tab <- cbind(
+  VaRbacktestB(Hit = Y_f[351:length(Y_f)]<pred_EQMLE$Y_hat_q[,1],VaR = -pred_EQMLE$Y_hat_q[,1],tau = 0.05,p = 3),
+  VaRbacktestB(Hit = Y_f[351:length(Y_f)]<pred_EQMLE$Y_hat_q[,2],VaR = -pred_EQMLE$Y_hat_q[,2],tau = 0.10,p = 3),
+  VaRbacktestB(Hit = Y_f[351:length(Y_f)]<pred_EQMLE$Y_hat_q[,3],VaR = -pred_EQMLE$Y_hat_q[,3],tau = 0.90,p = 3),
+  VaRbacktestB(Hit = Y_f[351:length(Y_f)]<pred_EQMLE$Y_hat_q[,4],VaR = -pred_EQMLE$Y_hat_q[,4],tau = 0.95,p = 3))
+colnames(pred_tab) <- tau
+round(pred_tab,4)
+```
+
+## LDAR(GQMLE)
+
+```{r message=FALSE, warning=FALSE}
+## interval partition
+n <- length(Y_f)
+spilt <- 350
+Y_train <- Y_f[1:spilt];Y_test <- Y_f[(spilt+1):n]
+tau <- c(0.05,0.10,0.90,0.95)
+```
+
+```{r message=FALSE, warning=FALSE}
+pred_GQMLE <- predict_GQMLE(Y_train,Y_test,q = tau,p,method= "rolling")
+pred_tab<-cbind(
+  VaRbacktestB(Hit = Y_f[351:length(Y_f)]<pred_GQMLE$Y_hat_q[,1],VaR = -pred_GQMLE$Y_hat_q[,1],tau = 0.05,p = 3),
+  VaRbacktestB(Hit = Y_f[351:length(Y_f)]<pred_GQMLE$Y_hat_q[,2],VaR = -pred_GQMLE$Y_hat_q[,2],tau = 0.10,p = 3),
+  VaRbacktestB(Hit = Y_f[351:length(Y_f)]<pred_GQMLE$Y_hat_q[,3],VaR = -pred_GQMLE$Y_hat_q[,3],tau = 0.90,p = 3),
+  VaRbacktestB(Hit = Y_f[351:length(Y_f)]<pred_GQMLE$Y_hat_q[,4],VaR = -pred_GQMLE$Y_hat_q[,4],tau = 0.95,p = 3))
+colnames(pred_tab) <- tau
+round(pred_tab,4)
+```
+
+
+## DWQRE
+
+```{r message=FALSE, warning=FALSE}
+## interval partition
+n <- length(Y_f)
+spilt <- 350
+Y_train <- Y_f[1:spilt];Y_test <- Y_f[(spilt+1):n]
+tau <- c(0.05,0.10,0.90,0.95)
+```
+
+```{r message=FALSE, warning=FALSE}
+pred_DWQRE <- predict_DWQRE(Y_train,Y_test,q = tau,p,method= "rolling")
+pred_tab <- cbind(
+  VaRbacktestB(Hit = Y_f[351:length(Y_f)]<pred_DWQRE$Y_hat_q[,1],VaR = -pred_DWQRE$Y_hat_q[,1],tau = 0.05,p = 3),
+  VaRbacktestB(Hit = Y_f[351:length(Y_f)]<pred_DWQRE$Y_hat_q[,2],VaR = -pred_DWQRE$Y_hat_q[,2],tau = 0.10,p = 3),
+  VaRbacktestB(Hit = Y_f[351:length(Y_f)]<pred_DWQRE$Y_hat_q[,3],VaR = -pred_DWQRE$Y_hat_q[,3],tau = 0.90,p = 3),
+  VaRbacktestB(Hit = Y_f[351:length(Y_f)]<pred_DWQRE$Y_hat_q[,4],VaR = -pred_DWQRE$Y_hat_q[,4],tau = 0.95,p = 3))
+colnames(pred_tab) <- tau
+round(pred_tab,4)
+```
