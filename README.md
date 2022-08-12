@@ -16,7 +16,7 @@ Quasi-maximum Likelihood Inference for Linear Double Autoregressive Models
   
 - **Rcode_for_LDAR.html**: This file contains all outputs for real data analysis of Liu et al. (2022+). Specifically, (1) Model estimations of the LDAR model based on EQMLE, GQMLE and DWQRE are presented in each subsection; (2) Based on the residuals of E-QMLE, we use Q-Q plot and KSD test to check the error distribution, and conduct portmanteau test to check the adequacy of fitted models; (3) The AREs are provided to compare the efficiency of three estimation methods. (4) Rolling forecasting and backtests are presented.
 
-- **Rcode_for_LDAR.Rmd**: Source code for **Rcode_for_LDAR.html**.
+- **Rcode_for_LDAR.Rmd**: Source code for 'Rcode_for_LDAR.html'.
 
 
 
